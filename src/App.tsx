@@ -2,10 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowUpRight,
   ArrowRight,
-  ArrowDown,
   RotateCcw,
   Download,
-  FileText,
   GitBranch,
   ShieldCheck,
   Sparkles,
@@ -13,14 +11,20 @@ import {
   X,
   CircleHelp,
   Plane,
+  PlaneTakeoff,
+  PlaneLanding,
   SlidersHorizontal,
   ExternalLink,
   ChevronDown,
   Fingerprint,
-  Circle,
   Scale,
   Activity,
   AlertTriangle,
+  Megaphone,
+  Ticket,
+  Luggage,
+  Printer,
+  Radar,
 } from 'lucide-react';
 import { BENCHMARK, CAUSES, demoJudgment, INITIAL_CASE, PRESETS } from './lib/cases';
 import { evaluate, GUIDANCE, REGULATION } from './lib/policy';
@@ -32,12 +36,12 @@ import {
 } from './lib/recorded-benchmark';
 import {
   DEFAULT_THRESHOLDS,
-  type Decision,
   type FlightCase,
   type Judgment,
   type Outcome,
   type Thresholds,
 } from './lib/types';
+import { Barcode, Count, SplitFlap, useReducedMotion, useReveal } from './ui';
 
 const pct = (n: number) => `${Number((n * 100).toFixed(1))}%`;
 const eur = (n: number) =>
@@ -52,6 +56,16 @@ const LABELS: Record<Outcome, string> = {
   DENY: 'Auto deny',
   REVIEW: 'Human review',
 };
+const BOARD: Record<Outcome, string> = {
+  APPROVE: 'AUTO APPROVE',
+  DENY: 'AUTO DENY',
+  REVIEW: 'SEE AGENT',
+};
+const PLANE_PATH =
+  'M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z';
+const fromCode = (c: FlightCase) => (c.originEU ? 'BCN' : 'JFK');
+const toCode = (c: FlightCase) => (c.destinationEU ? 'BER' : 'DXB');
+const flightNo = (id: string) => id.replace('EE-DEMO-', 'EE D').replace('EE-', 'EE ');
 function saveFile(name: string, data: unknown) {
   const url = URL.createObjectURL(
     new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }),
@@ -124,11 +138,43 @@ function Stamp({ outcome, small = false }: { outcome: Outcome; small?: boolean }
 }
 function StatusIcon({ state }: { state: string }) {
   return state === 'pass' ? (
-    <Check size={15} />
+    <Check size={14} />
   ) : state === 'fail' ? (
-    <X size={15} />
+    <X size={14} />
   ) : (
-    <CircleHelp size={15} />
+    <CircleHelp size={14} />
+  );
+}
+function Gauge({ value }: { value: number }) {
+  return (
+    <svg className="gauge" viewBox="0 0 200 112" aria-hidden="true">
+      <defs>
+        <linearGradient id="gauge-arc" x1="0" x2="1">
+          <stop offset="0" stopColor="var(--approve)" />
+          <stop offset="0.5" stopColor="var(--review)" />
+          <stop offset="1" stopColor="var(--violet)" />
+        </linearGradient>
+      </defs>
+      <path d="M16 100 A84 84 0 0 1 184 100" className="gauge-track" />
+      <path d="M16 100 A84 84 0 0 1 184 100" className="gauge-arc" />
+      {Array.from({ length: 11 }, (_, i) => {
+        const a = Math.PI - (i / 10) * Math.PI;
+        return (
+          <line
+            key={i}
+            x1={100 + Math.cos(a) * 70}
+            y1={100 - Math.sin(a) * 70}
+            x2={100 + Math.cos(a) * (i % 5 ? 64 : 58)}
+            y2={100 - Math.sin(a) * (i % 5 ? 64 : 58)}
+            className="gauge-tick"
+          />
+        );
+      })}
+      <g className="gauge-needle" style={{ transform: `rotate(${value * 180 - 90}deg)` }}>
+        <path d="M100 26 L104 100 L96 100 Z" />
+      </g>
+      <circle cx="100" cy="100" r="7" className="gauge-hub" />
+    </svg>
   );
 }
 
@@ -298,6 +344,25 @@ export default function App() {
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
+  const reducedMotion = useReducedMotion();
+  const heroPass = useRef<HTMLDivElement>(null);
+  const tilt = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = heroPass.current;
+    if (!el || e.pointerType !== 'mouse') return;
+    const box = e.currentTarget.getBoundingClientRect();
+    el.style.setProperty('--ry', `${((e.clientX - box.left) / box.width - 0.5) * 10}deg`);
+    el.style.setProperty('--rx', `${((e.clientY - box.top) / box.height - 0.5) * -8}deg`);
+  };
+  const untilt = () => {
+    heroPass.current?.style.setProperty('--ry', '0deg');
+    heroPass.current?.style.setProperty('--rx', '0deg');
+  };
+  const sequenceRef = useReveal<HTMLDivElement>();
+  const methodRef = useReveal<HTMLElement>();
+  const sourceRef = useReveal<HTMLElement>();
+  const footerRef = useReveal<HTMLElement>();
+  const ticker = stats.results.slice(0, 18);
+  const maxLoss = Math.max(...policies.map((p) => p.expectedLoss)) * 1.1;
 
   return (
     <>
@@ -305,128 +370,241 @@ export default function App() {
         Skip to the laboratory
       </a>
       <header className="site-header">
-        <a className="brand" href="#">
-          <span className="brand-symbol">
-            E<span>↗</span>
-          </span>
-          <span>
-            THE EXCEPTION
-            <br />
-            ENGINE<span className="brand-dot">.</span>
-          </span>
-        </a>
-        <nav aria-label="Main navigation">
-          <a href="#laboratory" onClick={() => setTab('explorer')}>
-            The laboratory
+        <div className="header-inner">
+          <a className="brand" href="#">
+            <span className="brand-symbol" aria-hidden="true">
+              <Plane size={18} />
+            </span>
+            <span className="brand-name">
+              THE EXCEPTION ENGINE
+              <small>Flight EE 261 · Policy Air</small>
+            </span>
           </a>
-          <a href="#methodology">How it works</a>
-          <a href={GITHUB} target="_blank" rel="noreferrer" className="github-link">
-            View source <ArrowUpRight size={15} />
-          </a>
-        </nav>
+          <nav aria-label="Main navigation">
+            <a href="#laboratory" onClick={() => setTab('explorer')}>
+              <span>Gate A</span> The laboratory
+            </a>
+            <a href="#methodology">
+              <span>Gate B</span> How it works
+            </a>
+            <a href={GITHUB} target="_blank" rel="noreferrer" className="github-link">
+              View source <ArrowUpRight size={15} />
+            </a>
+          </nav>
+        </div>
+        <div className="ticker" aria-hidden="true">
+          <div className="ticker-label">
+            <PlaneTakeoff size={14} /> DEPARTURES
+          </div>
+          <div className="ticker-track">
+            {[0, 1].map((copy) => (
+              <div className="ticker-run" key={copy}>
+                {ticker.map((r) => (
+                  <span key={r.case.id}>
+                    <b>{flightNo(r.case.id)}</b>
+                    {fromCode(r.case)} → {toCode(r.case)}
+                    <i>{r.case.event.replace('_', ' ')}</i>
+                    <em className={r.decision.outcome.toLowerCase()}>
+                      {BOARD[r.decision.outcome]}
+                    </em>
+                  </span>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
       </header>
       <main>
         <section className="hero wrap">
           <div className="hero-copy">
             <div className="eyebrow">
-              <span className="live-dot" /> A LABORATORY FOR THE GREY AREAS
+              <span className="live-dot" /> NOW BOARDING · A LABORATORY FOR THE GREY AREAS
             </div>
             <h1>
-              Rules are easy.
-              <br />
-              <em>Exceptions</em>
-              <br />
-              are expensive.
+              <span className="line">
+                <span>Rules are easy.</span>
+              </span>
+              <span className="line">
+                <span>
+                  <em>
+                    Exceptions
+                    <svg className="scribble" viewBox="0 0 300 90" aria-hidden="true">
+                      <path d="M18 52 C 40 12, 250 6, 284 40 C 300 62, 210 86, 120 82 C 50 80, 6 66, 22 40 C 34 22, 90 16, 150 14" />
+                    </svg>
+                  </em>
+                </span>
+              </span>
+              <span className="line">
+                <span>are expensive.</span>
+              </span>
             </h1>
             <p>
               Software knows the rules. AI interprets the uncertainty.
               <br className="desktop" /> But who knows when to ask a human?
             </p>
-            <a href="#laboratory" className="button primary" onClick={() => setTab('explorer')}>
-              Explore the decision boundary <ArrowRight size={17} />
-            </a>
-            <span className="hero-caption">EU air passenger rights · A working experiment</span>
+            <div className="hero-actions">
+              <a href="#laboratory" className="button primary" onClick={() => setTab('explorer')}>
+                <Ticket size={17} /> Board the laboratory <ArrowRight size={17} />
+              </a>
+              <a href="#methodology" className="button ghost">
+                How it works
+              </a>
+            </div>
+            <span className="hero-caption">
+              <Luggage size={13} /> EU air passenger rights · 600 recorded cases · A working
+              experiment
+            </span>
           </div>
           <div
             className="hero-visual"
-            aria-label="Architecture: known facts pass through policy rules and uncertain judgments to a human review decision."
+            onPointerMove={tilt}
+            onPointerLeave={untilt}
+            aria-label="A boarding pass for case EE-0001: a Barcelona to Berlin cancellation. Two rules pass, the extraordinary-cause question is uncertain at 37%, so the case is stamped for human review."
+            role="img"
           >
-            <div className="visual-grid" />
-            <div className="dossier-preview">
-              <div className="paper-top">
-                <span>EXCEPTION ENGINE / CASE OFFICE</span>
-                <Fingerprint size={23} />
+            <svg
+              className="sky-route"
+              viewBox="0 0 600 520"
+              preserveAspectRatio="xMidYMid slice"
+              aria-hidden="true"
+            >
+              <path
+                id="sky-path"
+                className="sky-path"
+                d="M-30 470 C 110 300, 260 520, 380 300 S 540 40, 640 20"
+              />
+              {!reducedMotion && (
+                <g className="sky-plane">
+                  <path transform="rotate(45) translate(-12 -12)" d={PLANE_PATH} />
+                  <animateMotion dur="14s" repeatCount="indefinite" rotate="auto">
+                    <mpath href="#sky-path" />
+                  </animateMotion>
+                </g>
+              )}
+            </svg>
+            <div className="printer-slot" aria-hidden="true" />
+            <div className="hero-pass-wrap">
+              <div className="hero-pass" ref={heroPass}>
+                <div className="pass-main">
+                  <div className="pass-head">
+                    <span>
+                      <Plane size={14} /> EXCEPTION AIR
+                    </span>
+                    <span>BOARDING PASS</span>
+                  </div>
+                  <div className="pass-route">
+                    <div>
+                      <small>FROM</small>
+                      <strong>BCN</strong>
+                      <span>Barcelona</span>
+                    </div>
+                    <div className="pass-path">
+                      <span className="pass-dash" />
+                      <Plane size={18} />
+                      <span className="pass-dash" />
+                    </div>
+                    <div>
+                      <small>TO</small>
+                      <strong>BER</strong>
+                      <span>Berlin</span>
+                    </div>
+                  </div>
+                  <div className="pass-fields">
+                    <div>
+                      <small>PASSENGER</small>
+                      <b>THE GREY AREA</b>
+                    </div>
+                    <div>
+                      <small>FLIGHT</small>
+                      <b>EE 0001</b>
+                    </div>
+                    <div>
+                      <small>GATE</small>
+                      <b>H1</b>
+                    </div>
+                    <div>
+                      <small>SEAT</small>
+                      <b>37%</b>
+                    </div>
+                  </div>
+                  <ul className="pass-checks">
+                    <li>
+                      <Check size={13} /> Journey covered <span>ART. 3</span>
+                    </li>
+                    <li>
+                      <Check size={13} /> Notice rule checked <span>ART. 5</span>
+                    </li>
+                    <li className="uncertain">
+                      <CircleHelp size={13} /> Extraordinary cause? <span>37% YES</span>
+                    </li>
+                  </ul>
+                </div>
+                <div className="pass-stub">
+                  <small>CLASS</small>
+                  <b>HUMAN</b>
+                  <small>BOARDING</small>
+                  <b>WHEN UNSURE</b>
+                  <Barcode value="EE-0001" />
+                  <span className="stub-code">EE0001 · H1</span>
+                </div>
               </div>
-              <div className="paper-title">
-                <span>CASE FILE</span>
-                <strong>EE–0001</strong>
-              </div>
-              <div className="preview-route">
-                BCN <Plane size={20} /> BER
-              </div>
-              <p>
-                One cancellation.
-                <br />
-                Two conflicting accounts.
-              </p>
-              <div className="preview-check">
-                <Check size={14} /> Journey covered <span>ART. 3</span>
-              </div>
-              <div className="preview-check">
-                <Check size={14} /> Notice rule checked <span>ART. 5</span>
-              </div>
-              <div className="preview-check uncertain">
-                <CircleHelp size={14} /> Extraordinary cause? <span>37% YES</span>
-              </div>
-              <div className="preview-stamp">
+              <div className="hero-stamp">
                 <Stamp outcome="REVIEW" />
               </div>
-              <div className="paper-bottom">THE RULE IS DETERMINISTIC. THE FACT ISN’T.</div>
             </div>
-            <div className="margin-note">
-              <span>←</span> This is where
+            <div className="margin-note" aria-hidden="true">
+              <span>↙</span> This is where
               <br />
               judgment begins.
             </div>
-            <div className="visual-note">
-              <span className="live-dot" /> HUMAN REVIEW IS A VALID OUTCOME
-            </div>
           </div>
         </section>
-        <div className="principles wrap">
-          <div>
-            <span>01</span>
-            <p>
-              <strong>Policy stays in code.</strong>
-              <br />
-              Explicit rules. Inspectable consequences.
-            </p>
-            <GitBranch size={22} />
-          </div>
-          <div>
-            <span>02</span>
-            <p>
-              <strong>AI assesses the facts.</strong>
-              <br />
-              Bounded questions. Visible uncertainty.
-            </p>
-            <Sparkles size={22} />
-          </div>
-          <div>
-            <span>03</span>
-            <p>
-              <strong>People handle the grey.</strong>
-              <br />
-              Confidence decides when to escalate.
-            </p>
-            <Fingerprint size={22} />
-          </div>
+        <div className="sequence wrap reveal" ref={sequenceRef}>
+          {(
+            [
+              {
+                n: 'ZONE 1',
+                step: 'Check-in',
+                title: 'Policy stays in code.',
+                text: 'Explicit rules. Inspectable consequences.',
+                icon: GitBranch,
+              },
+              {
+                n: 'ZONE 2',
+                step: 'Security',
+                title: 'AI assesses the facts.',
+                text: 'Bounded questions. Visible uncertainty.',
+                icon: Sparkles,
+              },
+              {
+                n: 'ZONE 3',
+                step: 'Gate',
+                title: 'People handle the grey.',
+                text: 'Confidence decides when to escalate.',
+                icon: Fingerprint,
+              },
+            ] as const
+          ).map(({ n, step, title, text, icon: Icon }, i) => (
+            <div key={n} style={{ '--i': i } as React.CSSProperties}>
+              <span className="zone">{n}</span>
+              <span className="zone-icon">
+                <Icon size={20} />
+              </span>
+              <p>
+                <small>{step}</small>
+                <strong>{title}</strong>
+                {text}
+              </p>
+            </div>
+          ))}
         </div>
 
         <section id="laboratory" className="laboratory wrap">
           <div className="section-intro">
             <div>
-              <div className="eyebrow">THE INTERACTIVE LABORATORY</div>
+              <div className="eyebrow">
+                <span className="gate-chip">GATE A</span> THE INTERACTIVE LABORATORY
+              </div>
               <h2>
                 Find the point where
                 <br className="mobile" /> the rule gives way.
@@ -473,9 +651,11 @@ export default function App() {
                 key={key}
                 onClick={() => setTab(key)}
               >
-                <span>{n}</span>
-                <Icon size={16} />
-                {label}
+                <span className="tab-gate">GATE {n}</span>
+                <span className="tab-label">
+                  <Icon size={16} />
+                  {label}
+                </span>
               </button>
             ))}
           </div>
@@ -484,20 +664,24 @@ export default function App() {
             role="status"
             aria-live="polite"
           >
-            <span>{boundary ? <GitBranch size={15} /> : <Circle size={9} />}</span>
-            {notice}
+            <span className="notice-icon">
+              {boundary ? <GitBranch size={15} /> : <Megaphone size={15} />}
+            </span>
+            <span className="notice-text" key={notice}>
+              {notice}
+            </span>
           </div>
           {tab === 'explorer' && (
             <div
-              className="explorer-grid"
+              className="explorer-grid tab-panel"
               role="tabpanel"
               id="panel-explorer"
               aria-labelledby="tab-explorer"
             >
-              <div className="case-panel panel">
-                <div className="panel-bar">
+              <div className="case-panel ticket">
+                <div className="ticket-band">
                   <span>
-                    <FileText size={14} /> THE CASE FILE
+                    <Ticket size={15} /> BOARDING PASS · CASE FILE
                   </span>
                   <button
                     className="icon-button"
@@ -528,23 +712,45 @@ export default function App() {
                       ))}
                     </select>
                   </div>
-                  <div className="case-meta">
-                    <span>{flight.id}</span>
-                    <span>FICTIONAL / EU261</span>
-                  </div>
                   <div className="route">
                     <div>
-                      <strong>{flight.originEU ? 'BCN' : 'JFK'}</strong>
+                      <small>FROM</small>
+                      <strong>{fromCode(flight)}</strong>
                       <span>{flight.origin}</span>
                     </div>
-                    <div className="route-line">
+                    <div className="route-line" key={flight.id}>
                       <span />
-                      <Plane size={19} />
+                      <Plane size={20} />
                       <span />
                     </div>
                     <div>
-                      <strong>{flight.destinationEU ? 'BER' : 'DXB'}</strong>
+                      <small>TO</small>
+                      <strong>{toCode(flight)}</strong>
                       <span>{flight.destination}</span>
+                    </div>
+                  </div>
+                  <div className="ticket-fields">
+                    <div>
+                      <small>FLIGHT</small>
+                      <b>{flight.id}</b>
+                    </div>
+                    <div>
+                      <small>EVENT</small>
+                      <b>{flight.event.replace('_', ' ')}</b>
+                    </div>
+                    <div>
+                      <small>DISTANCE</small>
+                      <b>{flight.distanceKm.toLocaleString()} km</b>
+                    </div>
+                    <div>
+                      <small>EVIDENCE</small>
+                      <b>
+                        {flight.evidence === 'complete'
+                          ? 'Documented'
+                          : flight.evidence === 'partial'
+                            ? 'Partial'
+                            : 'Conflicting'}
+                      </b>
                     </div>
                   </div>
                   <p className="case-summary">
@@ -558,19 +764,15 @@ export default function App() {
                       : ''}
                   </p>
                   <div className="evidence-tags">
-                    <span>
-                      <FileText size={11} />{' '}
-                      {flight.evidence === 'complete'
-                        ? 'DOCUMENTED'
-                        : flight.evidence === 'partial'
-                          ? 'PARTIAL RECORD'
-                          : 'CONFLICTING RECORD'}
-                    </span>
+                    <span>FICTIONAL / EU261</span>
                     <span>SIMULATED EVIDENCE</span>
                   </div>
+                </div>
+                <div className="perforation" aria-hidden="true" />
+                <div className="case-content">
                   <div className="divider-label">
                     <span>01 / KNOWN FACTS</span>
-                    <SlidersHorizontal size={13} />
+                    <SlidersHorizontal size={14} />
                   </div>
                   <div className="field">
                     <label htmlFor="event">Disruption type</label>
@@ -675,7 +877,7 @@ export default function App() {
                   )}
                   <details className="more-facts">
                     <summary>
-                      Coverage & scope <ChevronDown size={14} />
+                      Coverage & scope <ChevronDown size={15} />
                     </summary>
                     <label className="check-field">
                       <input
@@ -727,7 +929,7 @@ export default function App() {
                   </details>
                   <div className="divider-label">
                     <span>02 / UNCERTAIN FACTS</span>
-                    <Sparkles size={13} />
+                    <Sparkles size={14} />
                   </div>
                   <div className="two-fields">
                     <div className="field">
@@ -767,7 +969,7 @@ export default function App() {
                   </div>
                   <details className="more-facts">
                     <summary>
-                      Read / edit the evidence <ChevronDown size={14} />
+                      Read / edit the evidence <ChevronDown size={15} />
                     </summary>
                     <label htmlFor="narrative" className="fine-print">
                       Narrative sent to Jev only when you run a live assessment.
@@ -802,38 +1004,62 @@ export default function App() {
                   className={`result-panel ${decision.outcome.toLowerCase()} ${boundary ? 'boundary-flash' : ''}`}
                 >
                   <div className="result-top">
-                    <span>OPERATIONAL DECISION</span>
+                    <span>
+                      <span className="lamp" /> OPERATIONAL DECISION
+                    </span>
                     <span>{hasJev ? 'JEV + POLICY' : 'DEMO + POLICY'}</span>
                   </div>
+                  <div className="board-grid">
+                    <div className="board-cell">
+                      <small>FLIGHT</small>
+                      <SplitFlap text={flightNo(flight.id)} />
+                    </div>
+                    <div className="board-cell">
+                      <small>ROUTE</small>
+                      <SplitFlap text={`${fromCode(flight)} ${toCode(flight)}`} />
+                    </div>
+                    <div className="board-cell status-cell">
+                      <small>STATUS</small>
+                      <SplitFlap text={BOARD[decision.outcome]} pad={12} className="status" />
+                    </div>
+                  </div>
                   <div className="result-heading">
-                    <Stamp outcome={decision.outcome} />
+                    <Stamp outcome={decision.outcome} key={decision.outcome} />
                     <div className="amount">
-                      <strong>{decision.outcome === 'APPROVE' ? eur(decision.amount) : '—'}</strong>
+                      <strong>
+                        {decision.outcome === 'APPROVE' ? (
+                          <Count value={decision.amount} format={eur} duration={600} />
+                        ) : (
+                          '—'
+                        )}
+                      </strong>
                       <span>SIMULATED COMPENSATION</span>
                     </div>
                   </div>
                   <p>{decision.reason}</p>
                   <div className="result-footer">
-                    <span>
+                    <span className="strength">
                       <ShieldCheck size={14} /> {pct(decision.confidence)} decision strength
+                      <i style={{ width: pct(decision.confidence) }} />
                     </span>
                     <button onClick={() => setReceipt(true)}>
-                      Decision receipt <ArrowUpRight size={14} />
+                      <Ticket size={14} /> Decision receipt <ArrowUpRight size={14} />
                     </button>
                   </div>
                 </div>
                 <div className="panel rule-panel">
                   <div className="panel-bar">
                     <span>
-                      <GitBranch size={14} /> THE REASONING TRAIL
+                      <GitBranch size={14} /> THE FLIGHT PATH · REASONING TRAIL
                     </span>
                     <span>POLICY v1.0</span>
                   </div>
-                  <div className="rule-trail">
+                  <div className="rule-trail" key={decision.outcome}>
                     {decision.rules.map((rule, i) => (
                       <div
                         className={`rule-item ${rule.state} ${rule.id === 'ART. 5(3)' ? 'judgment-rule' : ''}`}
                         key={rule.id}
+                        style={{ '--i': i } as React.CSSProperties}
                       >
                         <div className="rule-marker">
                           <StatusIcon state={rule.state} />
@@ -843,29 +1069,39 @@ export default function App() {
                           <div className="rule-heading">
                             <strong>{rule.label}</strong>
                             <a href={rule.source} target="_blank" rel="noreferrer">
-                              {rule.id} <ArrowUpRight size={10} />
+                              {rule.id} <ArrowUpRight size={11} />
                             </a>
                           </div>
                           <p>{rule.detail}</p>
                         </div>
                       </div>
                     ))}
+                    <div className="trail-end">
+                      <PlaneLanding size={15} /> {LABELS[decision.outcome]}
+                    </div>
                   </div>
                 </div>
                 <div className="judgment-panel panel">
                   <div className="panel-bar">
                     <span>
-                      <Sparkles size={14} /> THE UNCERTAINTY SENSOR
+                      <Radar size={14} /> THE UNCERTAINTY SENSOR
                     </span>
                     <span>{hasJev ? (isRecorded ? 'RECORDED' : 'LIVE') : 'SYNTHETIC'}</span>
                   </div>
                   <div className="judgment-content">
                     <div className="judgment-title">
                       <h3>Was the cause extraordinary?</h3>
-                      <strong>
-                        {pct(judgment.extraordinaryProbability)}
-                        <small>PROBABILITY OF YES</small>
-                      </strong>
+                      <div className="gauge-wrap">
+                        <Gauge value={judgment.extraordinaryProbability} />
+                        <strong>
+                          <Count
+                            value={judgment.extraordinaryProbability}
+                            format={pct}
+                            duration={600}
+                          />
+                          <small>PROBABILITY OF YES</small>
+                        </strong>
+                      </div>
                     </div>
                     <div className="probability-scale">
                       <div style={{ width: pct(1 - judgment.extraordinaryProbability) }} />
@@ -916,11 +1152,11 @@ export default function App() {
                       </div>
                     )}
                     <button
-                      className="button jev-button"
+                      className={`button jev-button ${loading ? 'is-loading' : ''}`}
                       disabled={loading || !liveAvailable || decision.confidence === 1}
                       onClick={runLive}
                     >
-                      <Sparkles size={15} />
+                      {loading ? <Radar size={15} className="spin" /> : <Sparkles size={15} />}
                       {loading
                         ? 'Assessing the facts…'
                         : decision.confidence === 1
@@ -939,15 +1175,17 @@ export default function App() {
                   </div>
                 </div>
                 <div className="counterfactual">
-                  <GitBranch size={18} />
+                  <span className="counterfactual-icon">
+                    <GitBranch size={18} />
+                  </span>
                   <div>
-                    <h4>What would change this result?</h4>
+                    <h4>Alternate route: what would change this result?</h4>
                     <p>{decision.counterfactual}</p>
                   </div>
                 </div>
                 <details className="care-note">
                   <summary>
-                    What about care & assistance? <ChevronDown size={13} />
+                    What about care & assistance? <ChevronDown size={14} />
                   </summary>
                   <p>{decision.assistance}</p>
                   <a href={GUIDANCE} target="_blank" rel="noreferrer">
@@ -962,7 +1200,7 @@ export default function App() {
               role="tabpanel"
               id="panel-surface"
               aria-labelledby="tab-surface"
-              className="surface-panel panel"
+              className="surface-panel panel tab-panel"
             >
               <div className="panel-bar">
                 <span>
@@ -990,7 +1228,7 @@ export default function App() {
                   <h3>
                     Every dot is a case.
                     <br />
-                    Every colour is a consequence.
+                    <em>Every colour is a consequence.</em>
                   </h3>
                   <p>
                     {benchmark
@@ -1018,7 +1256,7 @@ export default function App() {
                   role="img"
                   aria-label={`Decision surface: ${stats.approve} approvals, ${stats.deny} denials, ${stats.review} reviews. Use the searchable case table for keyboard access.`}
                 >
-                  <rect x="65" y="15" width="810" height="300" fill="#f6f5ef" />
+                  <rect x="65" y="15" width="810" height="300" className="scatter-bg" />
                   {[0, 0.25, 0.5, 0.75, 1].map((v) => (
                     <g key={v}>
                       <line
@@ -1026,8 +1264,7 @@ export default function App() {
                         x2="875"
                         y1={315 - v * 300}
                         y2={315 - v * 300}
-                        stroke="#dcded6"
-                        strokeDasharray="3 5"
+                        className="grid-line"
                       />
                       <text x="52" y={319 - v * 300} textAnchor="end">
                         {pct(v)}
@@ -1052,6 +1289,7 @@ export default function App() {
                         cy={315 - r.decision.confidence * 285 + jitter * 0.45}
                         r="4"
                         className={`data-dot ${r.decision.outcome.toLowerCase()}`}
+                        style={{ animationDelay: `${(i % 120) * 6 + Math.floor(i / 120) * 40}ms` }}
                         onClick={() => selectCase(r.case)}
                       >
                         <title>
@@ -1073,20 +1311,28 @@ export default function App() {
                 points are offset slightly for visibility. Unknown labels are preserved.
               </p>
               <div className="surface-stats">
-                <div>
-                  <strong>{stats.approve}</strong>
+                <div className="approve">
+                  <strong>
+                    <Count value={stats.approve} />
+                  </strong>
                   <span>Auto approve</span>
                 </div>
-                <div>
-                  <strong>{stats.deny}</strong>
+                <div className="deny">
+                  <strong>
+                    <Count value={stats.deny} />
+                  </strong>
                   <span>Auto deny</span>
                 </div>
-                <div>
-                  <strong>{stats.review}</strong>
+                <div className="review">
+                  <strong>
+                    <Count value={stats.review} />
+                  </strong>
                   <span>Human review</span>
                 </div>
                 <div>
-                  <strong>{stats.unlabeled}</strong>
+                  <strong>
+                    <Count value={stats.unlabeled} />
+                  </strong>
                   <span>Intentionally unlabeled</span>
                 </div>
               </div>
@@ -1119,10 +1365,14 @@ export default function App() {
                 <span>{visibleCases.length} matching cases</span>
               </div>
               <div className="case-table">
+                <div className="board-title" aria-hidden="true">
+                  <PlaneTakeoff size={16} /> DEPARTURES · CASE BOARD
+                </div>
                 <table>
                   <thead>
                     <tr>
                       <th>Case</th>
+                      <th>Route</th>
                       <th>Disruption</th>
                       <th>Cause</th>
                       <th>Decision</th>
@@ -1130,9 +1380,12 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {visibleCases.slice(0, 25).map((r) => (
-                      <tr key={r.case.id}>
+                    {visibleCases.slice(0, 25).map((r, i) => (
+                      <tr key={r.case.id} style={{ '--i': i } as React.CSSProperties}>
                         <td className="mono">{r.case.id}</td>
+                        <td className="mono">
+                          {fromCode(r.case)} → {toCode(r.case)}
+                        </td>
                         <td>{r.case.event.replace('_', ' ')}</td>
                         <td>{CAUSES[r.case.cause].label}</td>
                         <td>
@@ -1164,18 +1417,23 @@ export default function App() {
             </div>
           )}
           {tab === 'risk' && (
-            <div role="tabpanel" id="panel-risk" aria-labelledby="tab-risk" className="risk-grid">
+            <div
+              role="tabpanel"
+              id="panel-risk"
+              aria-labelledby="tab-risk"
+              className="risk-grid tab-panel"
+            >
               <div className="panel">
                 <div className="panel-bar">
                   <span>
-                    <Scale size={14} /> SET THE RISK APPETITE
+                    <Scale size={14} /> FLIGHT CONTROLS · RISK APPETITE
                   </span>
                 </div>
                 <div className="risk-controls">
                   <h3>
                     How certain is
                     <br />
-                    certain enough?
+                    <em>certain enough?</em>
                   </h3>
                   <p>
                     A mistaken denial can cost more than a mistaken approval. Set separate
@@ -1199,7 +1457,7 @@ export default function App() {
                   />
                   <div className="divider-label">
                     <span>YOUR COST ASSUMPTIONS</span>
-                    <Scale size={13} />
+                    <Scale size={14} />
                   </div>
                   {(
                     [
@@ -1234,18 +1492,30 @@ export default function App() {
                 <div className="risk-metrics">
                   <div>
                     <span>AUTOMATION RATE</span>
-                    <strong>{pct(stats.automation)}</strong>
+                    <strong>
+                      <Count value={stats.automation} format={pct} />
+                    </strong>
                     <small>{stats.approve + stats.deny} of 600 cases</small>
+                    <i className="meter">
+                      <b style={{ width: pct(stats.automation) }} />
+                    </i>
                   </div>
                   <div>
                     <span>MODELED TOTAL LOSS</span>
-                    <strong>{eur(stats.expectedLoss)}</strong>
+                    <strong>
+                      <Count value={stats.expectedLoss} format={eur} />
+                    </strong>
                     <small>Review cost + expected mistakes</small>
                   </div>
                   <div>
                     <span>HUMAN REVIEW</span>
-                    <strong>{stats.review}</strong>
+                    <strong>
+                      <Count value={stats.review} />
+                    </strong>
                     <small>{pct(stats.review / 600)} of the benchmark</small>
+                    <i className="meter review">
+                      <b style={{ width: pct(stats.review / 600) }} />
+                    </i>
                   </div>
                 </div>
                 <div className="panel frontier-panel">
@@ -1271,11 +1541,10 @@ export default function App() {
                             x2="535"
                             y1={230 - v * 200}
                             y2={230 - v * 200}
-                            stroke="#dcded6"
-                            strokeDasharray="3 5"
+                            className="grid-line"
                           />
                           <text x="56" y={234 - v * 200} textAnchor="end">
-                            {eur(v * Math.max(...policies.map((p) => p.expectedLoss)) * 1.1)}
+                            {eur(v * maxLoss)}
                           </text>
                           <text x={65 + v * 470} y="253" textAnchor="middle">
                             {pct(v)}
@@ -1283,13 +1552,12 @@ export default function App() {
                         </g>
                       ))}
                       <polyline
-                        fill="none"
-                        stroke="#476c5b"
-                        strokeWidth="2"
+                        className="frontier-line"
+                        pathLength={1}
                         points={policies
                           .map(
                             (p) =>
-                              `${65 + p.automation * 470},${230 - (p.expectedLoss / (Math.max(...policies.map((q) => q.expectedLoss)) * 1.1)) * 200}`,
+                              `${65 + p.automation * 470},${230 - (p.expectedLoss / maxLoss) * 200}`,
                           )
                           .join(' ')}
                       />
@@ -1297,18 +1565,11 @@ export default function App() {
                         <circle
                           key={i}
                           cx={65 + p.automation * 470}
-                          cy={
-                            230 -
-                            (p.expectedLoss /
-                              (Math.max(...policies.map((q) => q.expectedLoss)) * 1.1)) *
-                              200
-                          }
-                          r={p === optimal ? 7 : 5}
-                          fill={p === optimal ? '#b08235' : '#476c5b'}
-                          stroke="#fff"
-                          strokeWidth="2"
+                          cy={230 - (p.expectedLoss / maxLoss) * 200}
+                          r={p === optimal ? 8 : 5.5}
                           onClick={() => setThresholds(p.thresholds)}
-                          className="frontier-dot"
+                          className={`frontier-dot ${p === optimal ? 'is-optimal' : ''}`}
+                          style={{ animationDelay: `${300 + i * 60}ms` }}
                         >
                           <title>
                             Approve {pct(p.thresholds.approve)}, deny {pct(p.thresholds.deny)}:{' '}
@@ -1373,16 +1634,18 @@ export default function App() {
             </div>
           )}
           <div className="lab-footnote">
-            <AlertTriangle size={13} />
+            <AlertTriangle size={14} />
             <span>
               Experimental / educational decision-system simulation. Fictional cases. A bounded
               EU261 model, not legal advice or real claim eligibility.
             </span>
           </div>
         </section>
-        <section id="methodology" className="methodology wrap">
+        <section id="methodology" className="methodology wrap reveal" ref={methodRef}>
           <div className="method-heading">
-            <span className="eyebrow">THE THINKING BEHIND THE ENGINE</span>
+            <span className="eyebrow">
+              <span className="gate-chip">GATE B</span> THE THINKING BEHIND THE ENGINE
+            </span>
             <h2>
               The rule is deterministic.
               <br />
@@ -1398,35 +1661,47 @@ export default function App() {
             </a>
           </div>
           <div className="method-steps">
-            <article>
-              <span>01 / FACTS</span>
-              <h3>Start with what’s known.</h3>
-              <p>Routes, notice periods, and arrival times are structured inputs. No AI needed.</p>
-            </article>
-            <ArrowDown size={17} />
-            <article>
-              <span>02 / JUDGMENT</span>
-              <h3>Ask a smaller question.</h3>
-              <p>
-                Jev assesses cause, evidence, and clarity. It never decides whether to pay a claim.
-                The 600-case benchmark uses recorded Jev assessments; edited cases can use synthetic
-                fixtures or a fresh live assessment.
-              </p>
-            </article>
-            <ArrowDown size={17} />
-            <article>
-              <span>03 / CONSEQUENCE</span>
-              <h3>Let code apply the policy.</h3>
-              <p>
-                Source-linked rules calculate the consequence. Separate confidence gates determine
-                whether to automate or ask a human.
-              </p>
-            </article>
+            <span className="itinerary-plane" aria-hidden="true">
+              <Plane size={16} />
+            </span>
+            <ol>
+              {(
+                [
+                  {
+                    leg: 'LEG 01 / FACTS',
+                    code: 'DEP',
+                    title: 'Start with what’s known.',
+                    text: 'Routes, notice periods, and arrival times are structured inputs. No AI needed.',
+                  },
+                  {
+                    leg: 'LEG 02 / JUDGMENT',
+                    code: 'VIA',
+                    title: 'Ask a smaller question.',
+                    text: 'Jev assesses cause, evidence, and clarity. It never decides whether to pay a claim. The 600-case benchmark uses recorded Jev assessments; edited cases can use synthetic fixtures or a fresh live assessment.',
+                  },
+                  {
+                    leg: 'LEG 03 / CONSEQUENCE',
+                    code: 'ARR',
+                    title: 'Let code apply the policy.',
+                    text: 'Source-linked rules calculate the consequence. Separate confidence gates determine whether to automate or ask a human.',
+                  },
+                ] as const
+              ).map((s, i) => (
+                <li key={s.leg} style={{ '--i': i } as React.CSSProperties}>
+                  <span className="leg-code">{s.code}</span>
+                  <div>
+                    <span className="leg">{s.leg}</span>
+                    <h3>{s.title}</h3>
+                    <p>{s.text}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
           </div>
         </section>
-        <section className="source-strip wrap">
+        <section className="source-strip wrap reveal" ref={sourceRef}>
           <div>
-            <ShieldCheck size={18} />
+            <ShieldCheck size={20} />
             <div>
               <strong>Grounded in sources. Open to inspection.</strong>
               <p>
@@ -1444,17 +1719,32 @@ export default function App() {
           </a>
         </section>
       </main>
-      <footer className="site-footer wrap">
-        <div>
-          <a className="footer-name" href="https://ankitkapoor.me" target="_blank" rel="noreferrer">
-            An experiment by Ankit Kapoor <ArrowUpRight size={14} />
-          </a>
-          <p>Building systems that know when they don’t know enough.</p>
+      <footer className="site-footer wrap reveal" ref={footerRef}>
+        <div className="bag-tag">
+          <span className="tag-hole" aria-hidden="true" />
+          <div>
+            <small>PRIORITY · HANDLE WITH JUDGMENT</small>
+            <a
+              className="footer-name"
+              href="https://ankitkapoor.me"
+              target="_blank"
+              rel="noreferrer"
+            >
+              An experiment by Ankit Kapoor <ArrowUpRight size={14} />
+            </a>
+            <p>Building systems that know when they don’t know enough.</p>
+          </div>
+          <div className="tag-code">
+            <b>EXC</b>
+            <Barcode value="ankitkapoor.me" />
+          </div>
         </div>
-        <a href={GITHUB} target="_blank" rel="noreferrer">
-          Explore the source <ArrowUpRight size={15} />
-        </a>
-        <span>POLICY × PROBABILITY × PEOPLE</span>
+        <div className="footer-links">
+          <a href={GITHUB} target="_blank" rel="noreferrer">
+            Explore the source <ArrowUpRight size={15} />
+          </a>
+          <span>POLICY × PROBABILITY × PEOPLE</span>
+        </div>
       </footer>
       <dialog
         ref={dialog}
@@ -1466,104 +1756,127 @@ export default function App() {
       >
         <div className="receipt-document">
           <div className="receipt-actions">
-            <span>DECISION RECEIPT</span>
+            <span>
+              <Ticket size={15} /> DECISION RECEIPT · AUDIT COPY
+            </span>
             <button aria-label="Close decision receipt" onClick={() => setReceipt(false)}>
               <X size={20} />
             </button>
           </div>
-          <div className="eyebrow">THE EXCEPTION ENGINE / AUDIT COPY</div>
-          <h2>{flight.id}</h2>
-          <Stamp outcome={decision.outcome} />
-          <p>
-            {flight.origin} → {flight.destination} · {flight.event.replace('_', ' ')}
-          </p>
-          <dl>
-            <div>
-              <dt>Compensation</dt>
-              <dd>
-                {decision.outcome === 'APPROVE'
-                  ? eur(decision.amount)
-                  : 'Not awarded / undetermined'}
-              </dd>
+          <div className="receipt-body">
+            <div className="eyebrow">THE EXCEPTION ENGINE / BOARDING PASS</div>
+            <div className="receipt-route">
+              <div>
+                <small>FROM</small>
+                <strong>{fromCode(flight)}</strong>
+                <span>{flight.origin}</span>
+              </div>
+              <Plane size={22} />
+              <div>
+                <small>TO</small>
+                <strong>{toCode(flight)}</strong>
+                <span>{flight.destination}</span>
+              </div>
             </div>
-            <div>
-              <dt>Decision strength</dt>
-              <dd>{pct(decision.confidence)}</dd>
+            <div className="receipt-title">
+              <h2>{flight.id}</h2>
+              {receipt && <Stamp outcome={decision.outcome} key={receiptTime} />}
             </div>
-            <div>
-              <dt>Thresholds (approve / deny)</dt>
-              <dd>
-                {pct(thresholds.approve)} / {pct(thresholds.deny)}
-              </dd>
-            </div>
-            <div>
-              <dt>Policy / question version</dt>
-              <dd>
-                {decision.policyVersion} / {judgment.questionVersion}
-              </dd>
-            </div>
-            <div>
-              <dt>Assessment model</dt>
-              <dd>
-                {judgment.model} ({judgment.mode})
-              </dd>
-            </div>
-            <div>
-              <dt>Judgment timestamp</dt>
-              <dd>{judgment.timestamp}</dd>
-            </div>
-            <div>
-              <dt>Receipt timestamp</dt>
-              <dd>{receiptTime}</dd>
-            </div>
-            <div>
-              <dt>Extraordinary probability</dt>
-              <dd>{pct(judgment.extraordinaryProbability)}</dd>
-            </div>
-            <div>
-              <dt>Evidence / clarity</dt>
-              <dd>
-                {judgment.evidenceScore.toFixed(1)} / {judgment.clarityScore.toFixed(1)} of 3
-              </dd>
-            </div>
-          </dl>
-          <h3>Known facts</h3>
-          <p>
-            {flight.distanceKm} km · Arrival delay {flight.arrivalDelay} min · Departure delay{' '}
-            {flight.departureDelay} min · Notice {flight.noticeDays} days · Rerouting{' '}
-            {flight.rerouting
-              ? `${flight.rerouteDepartureEarly} min early / ${flight.rerouteArrivalDelay} min late`
-              : 'not offered'}
-          </p>
-          <h3>Evidence</h3>
-          <p>{flight.narrative}</p>
-          <h3>Rules applied</h3>
-          {decision.rules.map((r) => (
-            <p key={r.id}>
-              <a href={r.source} target="_blank" rel="noreferrer">
-                {r.id}
-              </a>{' '}
-              · {r.label}: {r.detail}
+            <p>
+              {flight.origin} → {flight.destination} · {flight.event.replace('_', ' ')}
             </p>
-          ))}
-          <h3>What would change the result?</h3>
-          <p>{decision.counterfactual}</p>
-          <h3>Care & assistance</h3>
-          <p>{decision.assistance}</p>
-          <p className="fine-print">
-            Educational simulation. This receipt is not a legal determination. The complete JSON
-            includes the case snapshot and probability distributions when provided.
-          </p>
-          <div className="receipt-bottom">
-            <button
-              className="button primary"
-              onClick={() => saveFile(`${flight.id}-receipt.json`, receiptData(receiptTime))}
-            >
-              <Download size={15} /> Download full receipt
-            </button>
-            <button className="button secondary" onClick={() => window.print()}>
-              Print / save PDF
-            </button>
+            <dl>
+              <div>
+                <dt>Compensation</dt>
+                <dd>
+                  {decision.outcome === 'APPROVE'
+                    ? eur(decision.amount)
+                    : 'Not awarded / undetermined'}
+                </dd>
+              </div>
+              <div>
+                <dt>Decision strength</dt>
+                <dd>{pct(decision.confidence)}</dd>
+              </div>
+              <div>
+                <dt>Thresholds (approve / deny)</dt>
+                <dd>
+                  {pct(thresholds.approve)} / {pct(thresholds.deny)}
+                </dd>
+              </div>
+              <div>
+                <dt>Policy / question version</dt>
+                <dd>
+                  {decision.policyVersion} / {judgment.questionVersion}
+                </dd>
+              </div>
+              <div>
+                <dt>Assessment model</dt>
+                <dd>
+                  {judgment.model} ({judgment.mode})
+                </dd>
+              </div>
+              <div>
+                <dt>Judgment timestamp</dt>
+                <dd>{judgment.timestamp}</dd>
+              </div>
+              <div>
+                <dt>Receipt timestamp</dt>
+                <dd>{receiptTime}</dd>
+              </div>
+              <div>
+                <dt>Extraordinary probability</dt>
+                <dd>{pct(judgment.extraordinaryProbability)}</dd>
+              </div>
+              <div>
+                <dt>Evidence / clarity</dt>
+                <dd>
+                  {judgment.evidenceScore.toFixed(1)} / {judgment.clarityScore.toFixed(1)} of 3
+                </dd>
+              </div>
+            </dl>
+            <h3>Known facts</h3>
+            <p>
+              {flight.distanceKm} km · Arrival delay {flight.arrivalDelay} min · Departure delay{' '}
+              {flight.departureDelay} min · Notice {flight.noticeDays} days · Rerouting{' '}
+              {flight.rerouting
+                ? `${flight.rerouteDepartureEarly} min early / ${flight.rerouteArrivalDelay} min late`
+                : 'not offered'}
+            </p>
+            <h3>Evidence</h3>
+            <p>{flight.narrative}</p>
+            <h3>Rules applied</h3>
+            {decision.rules.map((r) => (
+              <p key={r.id}>
+                <a href={r.source} target="_blank" rel="noreferrer">
+                  {r.id}
+                </a>{' '}
+                · {r.label}: {r.detail}
+              </p>
+            ))}
+            <h3>What would change the result?</h3>
+            <p>{decision.counterfactual}</p>
+            <h3>Care & assistance</h3>
+            <p>{decision.assistance}</p>
+            <p className="fine-print">
+              Educational simulation. This receipt is not a legal determination. The complete JSON
+              includes the case snapshot and probability distributions when provided.
+            </p>
+          </div>
+          <div className="perforation" aria-hidden="true" />
+          <div className="receipt-stub">
+            <Barcode value={`${flight.id}${receiptTime}`} />
+            <div className="receipt-bottom">
+              <button
+                className="button primary"
+                onClick={() => saveFile(`${flight.id}-receipt.json`, receiptData(receiptTime))}
+              >
+                <Download size={15} /> Download full receipt
+              </button>
+              <button className="button secondary" onClick={() => window.print()}>
+                <Printer size={15} /> Print / save PDF
+              </button>
+            </div>
           </div>
         </div>
       </dialog>
