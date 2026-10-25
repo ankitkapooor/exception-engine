@@ -1,6 +1,6 @@
 import { CAUSES, demoJudgment } from './cases';
 import { evaluate } from './policy';
-import type { FlightCase, Thresholds } from './types';
+import type { FlightCase, Judgment, Thresholds } from './types';
 // Controlled labels assess this simulation, not legal correctness or real Jev accuracy.
 export function syntheticTruth(c: FlightCase): boolean | null {
   const truth = CAUSES[c.cause].truth;
@@ -20,7 +20,13 @@ export function syntheticTruth(c: FlightCase): boolean | null {
   return r.outcome === 'REVIEW' ? null : r.outcome === 'APPROVE';
 }
 export type Costs = { falseApproval: number; falseDenial: number; review: number };
-export function summarize(cases: FlightCase[], thresholds: Thresholds, costs: Costs) {
+export type JudgmentByCase = Record<string, Judgment>;
+export function summarize(
+  cases: FlightCase[],
+  thresholds: Thresholds,
+  costs: Costs,
+  judgments?: JudgmentByCase,
+) {
   let approve = 0,
     deny = 0,
     review = 0,
@@ -29,7 +35,7 @@ export function summarize(cases: FlightCase[], thresholds: Thresholds, costs: Co
     errors = 0,
     labeledAutomated = 0;
   const results = cases.map((c) => {
-    const judgment = demoJudgment(c),
+    const judgment = judgments?.[c.id] ?? demoJudgment(c),
       decision = evaluate(c, judgment, thresholds),
       truth = syntheticTruth(c);
     if (decision.outcome === 'APPROVE') approve++;
@@ -40,7 +46,7 @@ export function summarize(cases: FlightCase[], thresholds: Thresholds, costs: Co
     else if (truth !== null) {
       labeledAutomated++;
       if ((decision.outcome === 'APPROVE') !== truth) errors++;
-      // Expected loss uses fixture probabilities, not a fabricated error measurement.
+      // Expected loss uses judgment strength as a proxy, not measured error frequency.
       if (decision.confidence < 1)
         expectedLoss +=
           (1 - decision.confidence) *
@@ -60,9 +66,9 @@ export function summarize(cases: FlightCase[], thresholds: Thresholds, costs: Co
     results,
   };
 }
-export function frontier(cases: FlightCase[], costs: Costs) {
+export function frontier(cases: FlightCase[], costs: Costs, judgments?: JudgmentByCase) {
   return [0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.94, 0.96, 0.98, 0.99, 1].map((approve) => {
     const thresholds = { approve, deny: Math.min(1, approve + 0.04) };
-    return { thresholds, ...summarize(cases, thresholds, costs) };
+    return { thresholds, ...summarize(cases, thresholds, costs, judgments) };
   });
 }

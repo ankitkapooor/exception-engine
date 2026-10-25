@@ -26,6 +26,11 @@ import { BENCHMARK, CAUSES, demoJudgment, INITIAL_CASE, PRESETS } from './lib/ca
 import { evaluate, GUIDANCE, REGULATION } from './lib/policy';
 import { frontier, summarize, type Costs } from './lib/benchmark';
 import {
+  parseRecordedBenchmark,
+  caseSignature,
+  type RecordedBenchmark,
+} from './lib/recorded-benchmark';
+import {
   DEFAULT_THRESHOLDS,
   type Decision,
   type FlightCase,
@@ -132,6 +137,19 @@ export default function App() {
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [tab, setTab] = useState<'explorer' | 'surface' | 'risk'>('explorer');
   const [live, setLive] = useState<Judgment | null>(null);
+  const [benchmark, setBenchmark] = useState<RecordedBenchmark | null>(null);
+  const [benchmarkStatus, setBenchmarkStatus] = useState('loading');
+  const recordedCases = useMemo(
+    () => new Map(benchmark?.records.map((r) => [r.case.id, r]) ?? []),
+    [benchmark],
+  );
+  const recordedJudgments = useMemo(
+    () =>
+      benchmark
+        ? Object.fromEntries(benchmark.records.map((r) => [r.case.id, r.judgment]))
+        : undefined,
+    [benchmark],
+  );
   const [liveAvailable, setLiveAvailable] = useState(false);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState('Change a fact. Watch the rule respond.');
@@ -141,13 +159,26 @@ export default function App() {
   const [search, setSearch] = useState('');
   const dialog = useRef<HTMLDialogElement>(null);
   const requestVersion = useRef(0);
-  const judgment = live ?? demoJudgment(flight);
+  const matchingRecord = recordedCases.get(flight.id);
+  const recorded =
+    matchingRecord && caseSignature(matchingRecord.case) === caseSignature(flight)
+      ? matchingRecord.judgment
+      : null;
+  const judgment = live ?? recorded ?? demoJudgment(flight);
+  const hasJev = judgment.mode === 'live';
+  const isRecorded = !live && !!recorded;
   const decision = useMemo(
     () => evaluate(flight, judgment, thresholds),
     [flight, judgment, thresholds],
   );
-  const stats = useMemo(() => summarize(BENCHMARK, thresholds, costs), [thresholds, costs]);
-  const policies = useMemo(() => frontier(BENCHMARK, costs), [costs]);
+  const stats = useMemo(
+    () => summarize(BENCHMARK, thresholds, costs, recordedJudgments),
+    [thresholds, costs, recordedJudgments],
+  );
+  const policies = useMemo(
+    () => frontier(BENCHMARK, costs, recordedJudgments),
+    [costs, recordedJudgments],
+  );
   const optimal = policies.reduce(
     (best, p) => (p.expectedLoss < best.expectedLoss ? p : best),
     policies[0],
@@ -156,6 +187,20 @@ export default function App() {
   const [boundary, setBoundary] = useState(false);
   const [receiptTime, setReceiptTime] = useState('');
   useEffect(() => {
+    fetch('/benchmark/jev-results.json')
+      .then((r) => {
+        if (!r.ok) throw new Error('No recorded benchmark');
+        return r.json();
+      })
+      .then((data) => {
+        setBenchmark(parseRecordedBenchmark(data));
+        setBenchmarkStatus('ready');
+        if (requestVersion.current === 0) {
+          setFlight(BENCHMARK[0]);
+          setNotice('Loaded 600 recorded Jev assessments. Inspect a case or change a fact.');
+        }
+      })
+      .catch(() => setBenchmarkStatus('unavailable'));
     fetch('/api/health')
       .then((r) => r.json())
       .then((d) => setLiveAvailable(d.liveJevAvailable === true))
@@ -187,7 +232,12 @@ export default function App() {
     setNotice(description ?? 'Facts updated. The deterministic rules have been recalculated.');
   };
   const selectCase = (c: FlightCase) => {
-    update(c, `Opened ${c.id}. All judgments reset to synthetic fixtures.`);
+    update(
+      c,
+      recordedCases.has(c.id) && caseSignature(recordedCases.get(c.id)!.case) === caseSignature(c)
+        ? `Opened ${c.id} with its recorded Jev assessment. No new API call.`
+        : `Opened ${c.id}. Using synthetic fixtures until a live assessment is requested.`,
+    );
     setTab('explorer');
     document.getElementById('laboratory')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
@@ -383,9 +433,28 @@ export default function App() {
               </h2>
               <p>Adjust the facts, inspect the reasoning, and decide how much to automate.</p>
             </div>
-            <div className={`mode-label ${live ? 'is-live' : ''}`}>
-              <span className="live-dot" /> {live ? 'LIVE JEV ASSESSMENT' : 'SYNTHETIC DEMO'}
-              <small>{live ? judgment.model : 'No API key needed to explore'}</small>
+            <div
+              className={`mode-label ${(tab === 'explorer' ? hasJev : !!benchmark) ? 'is-live' : ''}`}
+            >
+              <span className="live-dot" />{' '}
+              {tab !== 'explorer'
+                ? benchmark
+                  ? 'RECORDED JEV · 600 CASES'
+                  : benchmarkStatus === 'loading'
+                    ? 'LOADING JEV BENCHMARK'
+                    : 'SYNTHETIC FALLBACK'
+                : hasJev
+                  ? isRecorded
+                    ? 'RECORDED JEV ASSESSMENT'
+                    : 'LIVE JEV ASSESSMENT'
+                  : 'SYNTHETIC DEMO'}
+              <small>
+                {tab !== 'explorer' && benchmark
+                  ? benchmark.models.join(', ')
+                  : hasJev
+                    ? judgment.model
+                    : 'No API key needed to explore'}
+              </small>
             </div>
           </div>
           <div className="workspace-tabs" role="tablist" aria-label="Laboratory views">
@@ -734,7 +803,7 @@ export default function App() {
                 >
                   <div className="result-top">
                     <span>OPERATIONAL DECISION</span>
-                    <span>{live ? 'JEV + POLICY' : 'DEMO + POLICY'}</span>
+                    <span>{hasJev ? 'JEV + POLICY' : 'DEMO + POLICY'}</span>
                   </div>
                   <div className="result-heading">
                     <Stamp outcome={decision.outcome} />
@@ -788,7 +857,7 @@ export default function App() {
                     <span>
                       <Sparkles size={14} /> THE UNCERTAINTY SENSOR
                     </span>
-                    <span>{live ? 'LIVE' : 'SYNTHETIC'}</span>
+                    <span>{hasJev ? (isRecorded ? 'RECORDED' : 'LIVE') : 'SYNTHETIC'}</span>
                   </div>
                   <div className="judgment-content">
                     <div className="judgment-title">
@@ -807,8 +876,8 @@ export default function App() {
                       <span>Extraordinary cause</span>
                     </div>
                     <p className="fine-print">
-                      {live
-                        ? 'Noul returns a probability, not a separate confidence score.'
+                      {hasJev
+                        ? `${isRecorded ? 'Recorded Jev assessment. ' : ''}Noul returns a probability, not a separate confidence score.`
                         : 'Illustrative probability from a fixed scenario fixture. This is not a live model prediction.'}
                     </p>
                     <div className="judgment-scores">
@@ -826,7 +895,7 @@ export default function App() {
                       </div>
                       <div>
                         <span>Assessment</span>
-                        <strong>{live ? 'Jev' : 'Fixture'}</strong>
+                        <strong>{hasJev ? 'Jev' : 'Fixture'}</strong>
                       </div>
                     </div>
                     {judgment.distributions && (
@@ -902,7 +971,10 @@ export default function App() {
                 <button
                   onClick={() =>
                     saveFile('exception-engine-600-cases.json', {
-                      synthetic: true,
+                      syntheticCases: true,
+                      judgmentSource: benchmark ? 'recorded-jev' : 'synthetic-fixtures',
+                      benchmarkCompletedAt: benchmark?.completedAt,
+                      models: benchmark?.models,
                       seed: 2612004,
                       count: BENCHMARK.length,
                       thresholds,
@@ -921,9 +993,13 @@ export default function App() {
                     Every colour is a consequence.
                   </h3>
                   <p>
-                    Explore 600 reproducible synthetic scenarios.
+                    {benchmark
+                      ? '600 synthetic scenarios assessed by Jev.'
+                      : 'Explore 600 reproducible synthetic scenarios.'}
                     <br />
-                    Select a point or open a case in the table below.
+                    {benchmark
+                      ? `Recorded ${new Date(benchmark.completedAt).toLocaleDateString('en-US', { timeZone: 'America/Los_Angeles' })} · ${benchmark.models.join(', ')} · no repeat API calls.`
+                      : 'Select a point or open a case in the table below.'}
                   </p>
                 </div>
                 <div className="chart-legend">
@@ -1280,15 +1356,17 @@ export default function App() {
                   <h4>Read the assumptions, not just the chart.</h4>
                   <p>
                     Expected loss = review count × review cost + each labeled automated case’s (1 −
-                    decision strength) × its mistake cost. Processing cost is set to €0. These
-                    probabilities are hand-authored fixtures, not calibrated Jev performance.
+                    decision strength) × its mistake cost. Processing cost is set to €0.{' '}
+                    {benchmark
+                      ? 'Probabilities come from 600 recorded Jev assessments; decision strength remains a heuristic, not calibrated error probability.'
+                      : 'These probabilities are hand-authored fixtures, not calibrated Jev performance.'}
                   </p>
                   <p>
                     {stats.errors} disagreements across {stats.labeledAutomated} automated, labeled
                     cases in this synthetic benchmark. Labels share policy code with the engine;
-                    this is an internal consistency check, not independent accuracy evidence.{' '}
-                    {stats.unlabeled} cases remain unlabeled and are excluded from error
-                    calculations. Evidence and clarity below 2/3 always require review.
+                    this is a comparison against controlled synthetic labels, not independent legal
+                    accuracy evidence. {stats.unlabeled} cases remain unlabeled and are excluded
+                    from error calculations. Evidence and clarity below 2/3 always require review.
                   </p>
                 </div>
               </div>
@@ -1331,7 +1409,8 @@ export default function App() {
               <h3>Ask a smaller question.</h3>
               <p>
                 Jev assesses cause, evidence, and clarity. It never decides whether to pay a claim.
-                The demo uses clearly labeled fixtures.
+                The 600-case benchmark uses recorded Jev assessments; edited cases can use synthetic
+                fixtures or a fresh live assessment.
               </p>
             </article>
             <ArrowDown size={17} />
@@ -1350,7 +1429,11 @@ export default function App() {
             <ShieldCheck size={18} />
             <div>
               <strong>Grounded in sources. Open to inspection.</strong>
-              <p>EU261 lab v1.0 · 600 synthetic cases · Seed 2612004 · Max 700 records</p>
+              <p>
+                EU261 lab v1.0 · 600 synthetic cases ·{' '}
+                {benchmark ? `${benchmark.models.join(', ')} recorded judgments` : 'Seed 2612004'} ·
+                Max 700 records
+              </p>
             </div>
           </div>
           <a href={REGULATION} target="_blank" rel="noreferrer">

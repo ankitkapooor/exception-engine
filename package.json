@@ -9,7 +9,8 @@
     "preview": "wrangler dev --ip 127.0.0.1 --port 8787",
     "test": "node --import tsx --test tests/*.test.ts",
     "check": "npm test && npm run build",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "benchmark:jev": "node --import tsx scripts/run-jev-benchmark.ts"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

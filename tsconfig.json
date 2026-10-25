@@ -11,5 +11,5 @@
     "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": ["src", "worker", "tests", "vite.config.ts"]
+  "include": ["src", "worker", "tests", "scripts", "vite.config.ts"]
 }

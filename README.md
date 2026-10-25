@@ -18,7 +18,7 @@ This is an educational simulation using fictional cases and a bounded model of E
 - Optional server-side Jev assessments: three bounded factual questions, never an AI compensation decision.
 - Responsive layouts, keyboard controls, live decision announcements, reduced-motion support, and a searchable text equivalent of the scatterplot.
 
-The synthetic demo works immediately. No accounts, database, API key, or paid model calls are required to explore it. Narrative edits are interpreted **only in live mode**; demo judgments are fixed cause/evidence fixtures.
+The app includes **600 recorded Jev assessments of synthetic cases**. The decision surface and risk lab use these saved model outputs; inspecting and adjusting thresholds makes no repeat API calls. The case explorer uses a recorded assessment only when every case field matches. Edited / custom cases fall back to labeled demo fixtures until you explicitly run a fresh live assessment. No API key is needed for visitors to explore the recorded results.
 
 ## Add your JEV API key
 
@@ -28,7 +28,7 @@ Your JEV key is called **`TYPESAFE_API_KEY`** in this project. It stays on the s
 
 1. Open [Cloudflare → Workers & Pages → exception-engine → Settings → Variables and Secrets](https://dash.cloudflare.com/2aa82d87fe21472b7c89953238f0cf6f/workers/services/view/exception-engine/production/settings).
 2. Add a variable of type **Secret** named **`TYPESAFE_API_KEY`**. Paste your JEV / TypeSafe API key as the value, then save/deploy the change.
-3. Reload the app. Choose a case needing a factual judgment, then click **Assess with live Jev**. Loading the page, changing sliders, and running the benchmark never trigger paid calls.
+3. Reload the app. Choose a case needing a factual judgment, then click **Assess with live Jev**. Loading the page, changing sliders, and exploring the recorded benchmark never trigger paid calls.
 
 `JEV_MODEL` defaults to `jev-latest`; the receipt records the actual model returned by the API. `LIVE_JEV_ENABLED` defaults to `true`, but live mode remains unavailable until the secret exists. Set it to `false` in `wrangler.jsonc` and redeploy to disable live calls.
 
@@ -38,7 +38,7 @@ CLI alternative (prompts for the key without putting it in shell history):
 npx wrangler secret put TYPESAFE_API_KEY
 ```
 
-There is no key included in this repository. No live Jev request was made during development; the adapter is tested with mocked official-format responses. Validate one live case after adding your key.
+There is no key included in this repository. The deployed key was verified successfully, then all 600 benchmark cases were assessed by Jev (three factual questions each). The complete recorded run is in `public/benchmark/jev-results.json`, including exact cases, returned model versions, timestamps, score distributions, and default-threshold decisions. Automated tests use mocks and the saved run; they do not spend API credits.
 
 ### Locally
 
@@ -74,7 +74,10 @@ One Cloudflare Worker serves static assets and the optional API on the same doma
 | --- | --- |
 | `src/lib/policy.ts` | Deterministic policy, compensation, care, and audit rules |
 | `src/lib/cases.ts` | Seeded generator, 600-record benchmark, demo judgments |
-| `src/lib/benchmark.ts` | Controlled labels, cost model, frontier |
+| `src/lib/benchmark.ts` | Controlled labels, cost model, frontier using recorded or fixture judgments |
+| `src/lib/recorded-benchmark.ts` | Validates all 600 exact case snapshots and Jev provenance |
+| `public/benchmark/jev-results.json` | The completed real Jev run on synthetic cases |
+| `scripts/run-jev-benchmark.ts` | Resumable one-case-at-a-time benchmark runner |
 | `src/lib/types.ts` | Shared schema, thresholds, hard 700-case limit |
 | `worker/jev.ts` | Three atomic Jev questions; validated response adapter |
 | `worker/index.ts` | Same-origin API, input limits, rate limit, failure handling |
@@ -83,9 +86,9 @@ One Cloudflare Worker serves static assets and the optional API on the same doma
 
 ## Dataset and validation limits
 
-The benchmark contains **600 records**, not the 5,000+ suggested by the source PRD. The generator rejects requests above **700**. No full dataset or bulk model evaluation is used. Tests reuse this bounded benchmark plus focused boundary fixtures.
+The benchmark contains **600 records**, not the 5,000+ suggested by the source PRD. The generator rejects requests above **700**. Only these 600 cases were evaluated with Jev; no larger dataset is loaded or tested. Tests reuse this bounded benchmark plus focused boundary fixtures.
 
-Fixtures include 1,499 / 1,500 / 1,501 km, 3,499 / 3,500 / 3,501 km, 179 / 180 / 181 minutes, and notice/rerouting boundaries. The generator is deterministic (seed `2612004`). All demo probabilities are illustrative and **not calibrated model accuracy**. Some intentionally ambiguous cases have no binary ground truth. The engine and synthetic labeler share policy code; their agreement is an internal consistency check, not independent legal validation.
+Fixtures include 1,499 / 1,500 / 1,501 km, 3,499 / 3,500 / 3,501 km, 179 / 180 / 181 minutes, and notice/rerouting boundaries. The generator is deterministic (seed `2612004`). All fallback demo probabilities are illustrative. The recorded benchmark contains actual Jev probabilities, but the app’s conservative decision-strength heuristic is **not a calibrated error probability**. Some intentionally ambiguous cases have no binary ground truth. The engine and synthetic labeler share policy code; their agreement is an internal consistency check, not independent legal validation.
 
 ```sh
 npm test          # policy boundaries and API/adapter tests; no network or live key
@@ -104,7 +107,21 @@ npm run deploy
 
 GitHub Actions checks tests and the build on pushes / PRs. Deployment is intentionally an explicit `npm run deploy`; no GitHub deployment secret or new access credential is required.
 
-Live calls are limited to **5 requests per minute per Cloudflare location across visitors**. This is an abuse guard, **not a global daily or spending cap**. Only individual cases can use Jev; there is no paid batch endpoint. Upstream failures, missing keys, rate limits, incomplete evidence, and malformed model responses never silently turn into a successful live assessment.
+Live calls are limited to **5 requests per minute per Cloudflare location across visitors**. This is an abuse guard, **not a global daily or spending cap**. The public API accepts only individual cases; there is no public paid batch endpoint. The completed owner-authorized run used a temporary authenticated route, which was removed after completion along with its token. Upstream failures, missing keys, rate limits, incomplete evidence, and malformed model responses never silently turn into a successful live assessment.
+
+## Recorded JEV benchmark
+
+[Read the completed run report](docs/jev-benchmark.md).
+
+[Download the complete 600-case run](https://exceptionengine.ankitkapoor.me/benchmark/jev-results.json). Its summary records approval, denial, review, controlled-label disagreements, and modeled loss at the default 90% / 98% gates. Fictional cases remain synthetic; the judgments are real Jev responses.
+
+To run or resume a future evaluation using the public single-case endpoint:
+
+```sh
+npm run benchmark:jev
+```
+
+This can incur model charges. It checkpoints each success under the gitignored `.wrangler/benchmark/` directory and skips completed case IDs after verifying their snapshots. A fresh run follows the public five-per-minute limit (roughly two hours for 600). It never creates more than the fixed 600 scenarios or substitutes fixtures for a failed Jev call. The owner’s API key stays in Cloudflare; no local copy is required. To intentionally start a new evaluation, archive the existing checkpoint directory first. After completion, review the changed JSON, run `npm run check`, and deploy it.
 
 ## Sources and scope
 
