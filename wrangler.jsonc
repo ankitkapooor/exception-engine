@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "exception-engine",
+  "account_id": "2aa82d87fe21472b7c89953238f0cf6f",
+  "routes": [{ "pattern": "exceptionengine.ankitkapoor.me", "custom_domain": true }],
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-10-25",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+  },
+  "vars": { "JEV_MODEL": "jev-latest", "LIVE_JEV_ENABLED": "true" },
+  "ratelimits": [
+    { "name": "JEV_RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 5, "period": 60 } },
+  ],
+  "observability": { "enabled": true },
+}

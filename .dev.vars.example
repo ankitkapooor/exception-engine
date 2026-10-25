@@ -1,0 +1,5 @@
+# Copy this file to .dev.vars for local Worker development (npm run preview).
+# Paste YOUR JEV / TypeSafe key after the equals sign. Never commit .dev.vars.
+TYPESAFE_API_KEY=
+JEV_MODEL=jev-latest
+LIVE_JEV_ENABLED=true
